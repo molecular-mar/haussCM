@@ -4,6 +4,68 @@ module hcm_core
   implicit none
 contains
   ! Helper: compute normalized Hausdorff (sabmax) between `Rcopy` and rotated `R1`
+  subroutine best_coords(NN, R1, ii, jj, kk, DF, DT, DP, SYM)
+    use file_parser
+    implicit none
+    integer, intent(in) :: NN, ii, jj, kk
+    real(real64), intent(in) :: R1(NN,3)
+    real(real64), allocatable :: Rbest(:,:)
+    real(real64) :: alpha, beta, gamma
+    real(real64) :: sabmax
+    real(real64) :: pi, OGRA, DELTAX, DELTAY, DELTAZ
+    integer :: i,j,k,ia
+    real(real64) :: RM(3,3)
+    real(real64), intent(in) :: DF, DT, DP
+    real(real64), allocatable :: R2(:,:), D1(:), D1MIN(:)
+    real(real64) :: AAMAX, BBMAX, abmax
+
+    character(len=30) :: filetest
+    character(len=2), intent(in) :: SYM(:)
+    !character(len=2), allocatable :: symbols(:) 
+
+    allocate(Rbest(NN,3), D1(NN), D1MIN(NN))
+  
+    filetest = 'centered_ref.xyz'
+    !allocate(symbols(NN))
+    !symbols = [ ('6', ia = 1, NN) ]
+    call write_xyz(filetest, NN, SYM, R1)
+
+    pi = 4.0_real64*atan(1.0_real64)
+    OGRA = (2.0_real64*pi)/360.0_real64
+    DELTAX = OGRA*DF
+    DELTAY = OGRA*DT
+    DELTAZ = OGRA*DP
+
+    gamma = (ii - 1) * DELTAZ
+    beta = (jj - 1) * DELTAY
+    alpha = (kk - 1) * DELTAX
+
+    RM(1,1) = cos(gamma)*cos(alpha) - cos(beta)*sin(alpha)*sin(gamma)
+    RM(1,2) = cos(gamma)*sin(alpha) + cos(beta)*cos(alpha)*sin(gamma)
+    RM(1,3) = sin(gamma)*sin(beta)
+    RM(2,1) = -sin(gamma)*cos(alpha) - cos(beta)*sin(alpha)*cos(gamma)
+    RM(2,2) = -sin(gamma)*sin(alpha) + cos(beta)*cos(alpha)*cos(gamma)
+    RM(2,3) = cos(gamma)*sin(beta)
+    RM(3,1) = sin(beta)*sin(alpha)
+    RM(3,2) = -sin(beta)*cos(alpha)
+    RM(3,3) = cos(beta)
+
+    do i=1,NN
+      do j=1,3
+        Rbest(i,j) = 0.0_real64
+      end do
+      do j=1,3
+        do k=1,3
+          Rbest(i,j) = Rbest(i,j) + RM(j,k) * R1(i,k)
+        end do
+      end do
+    end do
+
+    filetest = 'enan_fit.xyz'
+    call write_xyz(filetest, NN, SYM, Rbest)
+
+  end subroutine
+
   function rotation_sabmax(NN, Rcopy, R1, alpha, beta, gamma, AN) result(sabmax)
     implicit none
     integer, intent(in) :: NN
@@ -62,19 +124,22 @@ contains
     deallocate(R2, D1, D1MIN)
   end function rotation_sabmax
 
-  function compute_chiral_index(NN, R, DF, DT, DP, DDT, NT) result(best)
+  function compute_chiral_index(NN, R, DF, DT, DP, DDT, NT, XYZ_P, SYM) result(best)
+    use file_parser
     implicit none
     integer, intent(in) :: NN, NT
     real(real64), intent(in) :: R(NN,3)
     real(real64), intent(in) :: DF, DT, DP, DDT
+    logical, intent(in) :: XYZ_P
     real(real64) :: best
+    character(len=2), dimension(:), allocatable, intent(in) :: SYM
 
-    integer :: i,j,k,ii,jj,kk
+    integer :: i,j,k,ii,jj,kk,local_ii,local_jj,local_kk,BEST_II,BEST_JJ,BEST_KK,ia
     integer :: NA,NB,NC
     integer :: nmd, nm, nme, ij, ik, il
     real(real64) :: pi, OGRA, DELTAX, DELTAY, DELTAZ
     real(real64) :: dw, w1, w2, w3
-    real(real64) :: ACC, ANTEMAX
+    real(real64) :: ACC, ANTEMAX, local_antemax
     real(real64) :: X, Y, Z  ! cumulative Euler angles (persistent across iterations)
     real(real64), allocatable :: RA(:,:), R1(:,:), R2(:,:)
     real(real64), allocatable :: D1(:), D1MIN(:)
@@ -87,6 +152,9 @@ contains
     real(real64) :: sum1, sum2, sum3, asum1, asum2, asum3
     real(real64), allocatable :: Rcopy(:,:)  ! local copy of R for centering
 
+    character(len=30) :: filetest
+    !character(len=2), allocatable :: symbols(:) 
+
     allocate(RA(NN,3), R1(NN,3), R2(NN,3), D1(NN), D1MIN(NN), DA1(NN), DA2(NN), Rcopy(NN,3))
 
     ! Copy R to local array
@@ -95,6 +163,12 @@ contains
         Rcopy(i,j) = R(i,j)
       end do
     end do
+    
+    !filetest = 'test_coords1.xyz'
+    !allocate(symbols(NN))
+    !symbols = [ ('6', ia = 1, NN) ]
+    !call write_xyz(filetest, NN, symbols, Rcopy)
+
 
     ! Center coordinates relative to center of mass
     sum1 = 0.0_real64
@@ -114,12 +188,18 @@ contains
       Rcopy(i,3) = Rcopy(i,3) - asum3
     end do
 
+    !filetest = 'test_coords2.xyz'
+    !call write_xyz(filetest, NN, symbols, Rcopy)
+
     ! Mirror image (using centered coordinates)
     do i=1,NN
       do j=1,3
         RA(i,j) = - Rcopy(i,j)
       end do
     end do
+    
+    !filetest = 'test_coords3_enan.xyz'
+    !call write_xyz(filetest, NN, symbols, RA)
 
     ! Compute diameter AN (max pairwise distance) using centered coordinates
     do i=1,NN
@@ -130,6 +210,7 @@ contains
     end do
     AN = maxval(DA2)
     if (AN == 0.0_real64) AN = 1.0_real64
+    print *, "Computed diameter = ", AN
 
     pi = 4.0_real64*atan(1.0_real64)
     OGRA = (2.0_real64*pi)/360.0_real64
@@ -183,7 +264,15 @@ contains
           ! per-translation best (ANTEMAX)
           ANTEMAX = 1.0_real64
 
-          !$OMP PARALLEL DEFAULT(SHARED) PRIVATE(ii,jj,kk,X,Y,Z,alpha,beta,gamma) REDUCTION(MIN:ANTEMAX)
+          !$OMP PARALLEL DEFAULT(SHARED) & 
+          !$OMP PRIVATE(ii,jj,kk,X,Y,Z,alpha,beta,gamma) &
+          !$OMP PRIVATE(local_antemax, local_ii, local_jj, local_kk)
+
+          local_antemax = HUGE(local_antemax)
+          local_ii = -1
+          local_jj = -1
+          local_kk = -1
+
           !$OMP DO COLLAPSE(3) SCHEDULE(DYNAMIC)
           do ii = 1, NA
             do jj = 1, NB
@@ -192,11 +281,26 @@ contains
                 Y = (jj - 1) * DELTAY
                 X = (kk - 1) * DELTAX
                 sabmax = rotation_sabmax(NN, Rcopy, R1, X, Y, Z, AN)
-                if (sabmax < ANTEMAX) ANTEMAX = sabmax
+                if (sabmax < local_antemax) then 
+                    local_antemax = sabmax
+                    local_ii = ii
+                    local_jj = jj
+                    local_kk = kk
+                end if
               end do
             end do
           end do
-          !$OMP END DO
+          !$OMP END DO NOWAIT
+
+          !$OMP CRITICAL
+          if (local_antemax < ANTEMAX) then
+            ANTEMAX = local_antemax
+            BEST_II = local_ii
+            BEST_JJ = local_jj
+            BEST_KK = local_kk
+          end if
+          !$OMP END CRITICAL
+
           !$OMP END PARALLEL
 
           ! Track minimum across translations
@@ -205,6 +309,8 @@ contains
         end do
       end do
     end do
+
+    if (XYZ_P) call best_coords(NN, RA, BEST_II, BEST_JJ, BEST_KK, DF, DT, DP, SYM)
 
     best = ACC
 
