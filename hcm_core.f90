@@ -25,11 +25,6 @@ contains
 
     allocate(Rbest(NN,3), D1(NN), D1MIN(NN))
   
-    filetest = 'centered_ref.xyz'
-    !allocate(symbols(NN))
-    !symbols = [ ('6', ia = 1, NN) ]
-    call write_xyz(filetest, NN, SYM, R1)
-
     pi = 4.0_real64*atan(1.0_real64)
     OGRA = (2.0_real64*pi)/360.0_real64
     DELTAX = OGRA*DF
@@ -135,6 +130,7 @@ contains
     character(len=2), dimension(:), allocatable, intent(in) :: SYM
 
     integer :: i,j,k,ii,jj,kk,local_ii,local_jj,local_kk,BEST_II,BEST_JJ,BEST_KK,ia
+    integer :: GLOBAL_BEST_II, GLOBAL_BEST_JJ, GLOBAL_BEST_KK
     integer :: NA,NB,NC
     integer :: nmd, nm, nme, ij, ik, il
     real(real64) :: pi, OGRA, DELTAX, DELTAY, DELTAZ
@@ -150,12 +146,13 @@ contains
     real(real64) :: AAMAX, BBMAX, AMAX, BMAX
     real(real64) :: abmax, sabmax
     real(real64) :: sum1, sum2, sum3, asum1, asum2, asum3
-    real(real64), allocatable :: Rcopy(:,:)  ! local copy of R for centering
+    real(real64), allocatable :: Rcopy(:,:), Rbest_input(:,:)  ! centered input and global-best candidate
 
     character(len=30) :: filetest
     !character(len=2), allocatable :: symbols(:) 
 
-    allocate(RA(NN,3), R1(NN,3), R2(NN,3), D1(NN), D1MIN(NN), DA1(NN), DA2(NN), Rcopy(NN,3))
+    allocate(RA(NN,3), R1(NN,3), R2(NN,3), D1(NN), D1MIN(NN), DA1(NN), DA2(NN), &
+         Rcopy(NN,3), Rbest_input(NN,3))
 
     ! Copy R to local array
     do i = 1, NN
@@ -187,6 +184,8 @@ contains
       Rcopy(i,2) = Rcopy(i,2) - asum2
       Rcopy(i,3) = Rcopy(i,3) - asum3
     end do
+
+    if (XYZ_P) call write_xyz('centered_ref.xyz', NN, SYM, Rcopy)
 
     !filetest = 'test_coords2.xyz'
     !call write_xyz(filetest, NN, symbols, Rcopy)
@@ -240,7 +239,7 @@ contains
     w3 = w1
     nme = nmd + 1
 
-    ACC = 1.0_real64
+    ACC = HUGE(ACC)
 
     do ij = 1, nme
       w1 = w1 + dw
@@ -262,7 +261,7 @@ contains
           end do
 
           ! per-translation best (ANTEMAX)
-          ANTEMAX = 1.0_real64
+          ANTEMAX = HUGE(ANTEMAX)
 
           !$OMP PARALLEL DEFAULT(SHARED) & 
           !$OMP PRIVATE(ii,jj,kk,X,Y,Z,alpha,beta,gamma) &
@@ -304,17 +303,24 @@ contains
           !$OMP END PARALLEL
 
           ! Track minimum across translations
-          if (ANTEMAX < ACC) ACC = ANTEMAX
+          if (ANTEMAX < ACC) then
+            ACC = ANTEMAX
+            Rbest_input = R1
+            GLOBAL_BEST_II = BEST_II
+            GLOBAL_BEST_JJ = BEST_JJ
+            GLOBAL_BEST_KK = BEST_KK
+          end if
 
         end do
       end do
     end do
 
-    if (XYZ_P) call best_coords(NN, RA, BEST_II, BEST_JJ, BEST_KK, DF, DT, DP, SYM)
+    if (XYZ_P) call best_coords(NN, Rbest_input, GLOBAL_BEST_II, GLOBAL_BEST_JJ, &
+                  GLOBAL_BEST_KK, DF, DT, DP, SYM)
 
     best = ACC
 
-    deallocate(RA, R1, R2, D1, D1MIN, DA1, DA2, Rcopy)
+    deallocate(RA, R1, R2, D1, D1MIN, DA1, DA2, Rcopy, Rbest_input)
   end function compute_chiral_index
 
 end module hcm_core
